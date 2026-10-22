@@ -192,9 +192,9 @@ function parseSpine(text: string): { artist: string; album: string } {
   if (split.length >= 2 && split[0].length > 1 && split[1].length > 1) return { artist: split[0], album: split.slice(1).join(' - ') };
   return { artist: '', album: clean }; // mai indovinare un artista senza separatore
 }
-export function draftFromText(photoId: string, region: Region, text: string, confidence: number): OCRDraft {
+export function draftFromText(photoId: string, region: Region, text: string, confidence: number, previewUrl = ''): OCRDraft {
   const parsed = parseSpine(text);
-  return { id: uid(), photoId, bounds: region, text, confidence,
+  return { id: uid(), photoId, bounds: region, text, confidence, previewUrl,
     artist: parsed.artist, album: parsed.album, candidates: [], editions: [],
     selectedMbid: '', selectedReleaseId: '', loading: false, error: '' };
 }
@@ -231,7 +231,7 @@ export async function scanCanvas(
       }
       if(best&&best.confidence>=25&&assessOCR(best.text,best.confidence)>=30&&normalize(best.text).length>=4
         &&!result.some(d=>similarity(d.text,best.text)>=.93)){
-        result.push(draftFromText(photoId,r,best.text,Math.round(best.confidence)));
+        result.push(draftFromText(photoId,r,best.text,Math.round(best.confidence),previewSpine(canvas,r)));
       }
       onProgress(i+1,checked.length);
     }
