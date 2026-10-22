@@ -1,0 +1,8 @@
+name = "cd-collection-prices"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Impostare al dominio esatto della propria pagina (senza / finale).
+# Con GitHub Pages l'origine è https://CastoroBoy.github.io (NON include /NOMEREPO).
+[vars]
+ALLOWED_ORIGIN = "https://CastoroBoy.github.io"
