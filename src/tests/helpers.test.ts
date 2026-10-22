@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { equivalent, estimate, normalize, soldSearchUrl, uniqueCds } from '../lib/helpers';
 import { validateSales } from '../lib/prices';
-import { detectBoundaries } from '../lib/ocr';
+import { assessOCR, chooseRead, detectBoundaries } from '../lib/ocr';
 import type { CdItem, SoldSale } from '../lib/types';
 const cd: CdItem = { id:'a',artist:'Pink Floyd',album:'The Wall',firstReleaseDate:'1979',editionDate:'',editionCountry:'',editionNote:'',
   mbid:'',releaseId:'',ocrText:'',ocrConfidence:null,confidence:'confermato',sales:[],lastPriceCheck:'',lastMusicCheck:'',createdAt:'',updatedAt:'' };
@@ -35,5 +35,22 @@ describe('riconoscimento geometrico', () => {
     expect(limits[0]).toBe(0);
     expect(limits.at(-1)).toBe(500);
     expect(limits.length).toBeGreaterThanOrEqual(9);
+  });
+});
+
+describe('qualità OCR della costa', () => {
+  it('rifiuta sequenze di rumore invece di generare un disco', () => {
+    expect(assessOCR('!! | / --?', 95)).toBeLessThan(0);
+    expect(chooseRead([{text:'### | ---',confidence:99,score:0,angle:90}])).toBeUndefined();
+  });
+  it('preferisce una scritta riconoscibile a testo casuale', () => {
+    const best=chooseRead([
+      {text:'!;!;--- / / / $$$',confidence:96,score:0,angle:90},
+      {text:'Pink Floyd - The Wall',confidence:81,score:0,angle:270}
+    ]);
+    expect(best?.text).toBe('Pink Floyd - The Wall');
+  });
+  it('non inventa dieci dorsi in un profilo privo di confini', () => {
+    expect(detectBoundaries(new Array(700).fill(0),20)).toEqual([0,700]);
   });
 });

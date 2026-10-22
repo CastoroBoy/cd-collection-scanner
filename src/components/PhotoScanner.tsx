@@ -14,6 +14,9 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
   const [selected, setSelected] = useState('');
   const [preview, setPreview] = useState('');
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [thorough, setThorough] = useState(true);
+  const [autoRegions, setAutoRegions] = useState<Region[]>([]);
+  const [showRegions, setShowRegions] = useState(true);
   const [zoom, setZoom] = useState(100);
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [dragEnd, setDragEnd] = useState<Point | null>(null);
@@ -26,10 +29,10 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
   useEffect(() => () => { for (const photo of photosRef.current) URL.revokeObjectURL(photo.objectUrl); }, []);
   useEffect(() => {
     let cancelled = false;
-    setPreview(''); setCanvas(null); setDragStart(null); setDragEnd(null);
+    setPreview(''); setCanvas(null); setAutoRegions([]); setDragStart(null); setDragEnd(null);
     if (active) prepareCanvas(active).then(c => {
       if (cancelled) return;
-      setCanvas(c); setPreview(c.toDataURL('image/jpeg', .9));
+      setCanvas(c); setAutoRegions(proposeRegions(c)); setPreview(c.toDataURL('image/jpeg', .9));
     }).catch(e => onInfo(String(e)));
     return () => { cancelled = true; };
   }, [active?.id, active?.rotation]);
@@ -56,11 +59,11 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
         const regions = crop ? [crop] : proposeRegions(c);
         const found = await scanCanvas(c, photo.id, regions, (done, total) => {
           setProgress(`Foto ${i + 1}/${batch.length} • dorsi analizzati ${done}/${total}`);
-        });
+        }, { thorough });
         drafts.push(...found);
       }
       onDrafts(drafts);
-      if (!drafts.length) onInfo('Nessun testo sufficientemente affidabile. Seleziona una zona e riprova; puoi anche aggiungere il CD manualmente.');
+      if (!drafts.length) onInfo('Nessun testo affidabile. Seleziona a mano una sola costa e premi “Scansiona zona selezionata”. Non vengono creati CD casuali.');
       else onInfo(`Estratte ${drafts.length} possibili coste. Controlla le trascrizioni prima di confermarle.`);
       setDragStart(null); setDragEnd(null);
     } catch (e) { onInfo(`Scansione non riuscita: ${e instanceof Error ? e.message : String(e)}`); }
@@ -107,16 +110,20 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
           <button className="btn-soft" disabled={!active || working} onClick={() => setPhotos(current => current.map(p => p.id === selected ? { ...p, rotation: ((p.rotation + 90) % 360) as PhotoFile['rotation'] } : p))}><RotateCw size={17}/> Ruota 90°</button>
           <label className="flex gap-2 items-center text-sm text-slate-600"><ZoomIn size={17}/> Zoom
             <input aria-label="Zoom anteprima" type="range" min="100" max="300" step="25" value={zoom} onChange={e => setZoom(Number(e.target.value))}/> {zoom}%</label>
-          <span className="text-xs text-slate-500">Trascina un rettangolo sulla foto per isolare una costa</span>
+          <label className="flex gap-2 items-center text-sm text-slate-700"><input type="checkbox" checked={thorough} disabled={working} onChange={e => setThorough(e.target.checked)}/> OCR accurato (più lento)</label>
+          <label className="flex gap-2 items-center text-sm text-slate-700"><input type="checkbox" checked={showRegions} onChange={e => setShowRegions(e.target.checked)}/> Mostra dorsi rilevati ({autoRegions.length})</label>
+          <span className="text-xs text-slate-500">Trascina un rettangolo attorno a UNA costa per una scansione mirata</span>
         </div>
         <div className="bg-slate-100 border rounded-xl overflow-auto max-h-[580px]">
           {preview && <div style={{ width: `${zoom}%`, minWidth: '100%', position: 'relative' }}>
             <img alt="Anteprima delle coste CD" src={preview} draggable={false} className="w-full h-auto block select-none"/>
             <div className="absolute inset-0 cursor-crosshair touch-none" onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); const p = coords(e); setDragStart(p); setDragEnd(p); }}
               onPointerMove={e => { if (dragStart) setDragEnd(coords(e)); }} onPointerUp={e => setDragEnd(coords(e))} />
+            {showRegions && canvas && autoRegions.map((r,i) => <div key={i} className="absolute border border-amber-400/80 pointer-events-none" style={{left:`${r.x*100/canvas.width}%`,top:`${r.y*100/canvas.height}%`,width:`${r.width*100/canvas.width}%`,height:`${r.height*100/canvas.height}%`}}><span className="absolute top-0 left-0 text-[9px] bg-amber-400/90 px-1">{i+1}</span></div>)}
             {box && <div className="absolute border-2 border-teal bg-teal/20 pointer-events-none" style={{ left:`${box.x*100}%`, top:`${box.y*100}%`, width:`${box.w*100}%`, height:`${box.h*100}%` }}/>}</div>}
           {!preview && <p className="p-6 small">Preparazione anteprima…</p>}
         </div>
+        {canvas && autoRegions.length===0 && <p className="text-sm text-amber-700 mt-2">Non sono stati individuati confini affidabili: seleziona manualmente una costa alla volta e ripeti la scansione.</p>}
         <div className="flex flex-wrap gap-2 mt-4 items-center">
           <button className="btn-dark" disabled={working} onClick={() => scan(true)}><ScanLine size={17}/> 🔎 SCANSIONA TUTTE LE FOTO</button>
           <button className="btn-soft" disabled={working || !roi} onClick={() => roi && scan(false, roi)}>Scansiona zona selezionata</button>

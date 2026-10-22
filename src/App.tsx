@@ -95,18 +95,6 @@ export default function App() {
         const latest = draftsRef.current.find(d => d.id === draft.id);
         const stillUnchanged = latest && latest.artist === draft.artist && latest.album === draft.album;
         if (!stillUnchanged) continue;
-        // Auto-conferma solo un match inequivocabile con OCR alto e almeno un'edizione fisica CD.
-        if (draft.confidence >= 88 && best && best.score >= 98 && (!other || other.score <= 78)) {
-          let editions = [] as Awaited<ReturnType<typeof findCDEditions>>;
-          try { editions = await findCDEditions(best.id); } catch { /* conferma manuale */ }
-          if (editions.length && draftsRef.current.some(d => d.id === draft.id && d.artist === draft.artist && d.album === draft.album)) {
-            const resolved = makeItem({ ...draft, candidates: results, selectedMbid: best.id });
-            setItems(prev => prev.some(c => equivalent(c, resolved)) ? prev : [...prev, resolved]);
-            setDrafts(prev => prev.filter(d => d.id !== draft.id));
-            setSelectedId(resolved.id);
-            continue;
-          }
-        }
         const confidentSplit = Boolean(best && best.score >= 92 && (!other || best.score - other.score >= 8));
         setDrafts(previous => previous.map(d => d.id === draft.id && d.artist === draft.artist && d.album === draft.album
           ? { ...d, candidates: results, artist: !d.artist && confidentSplit && best ? best.artist : d.artist,
