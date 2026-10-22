@@ -1,8 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Camera, Images, RotateCw, ScanLine, Trash2, UploadCloud, ZoomIn } from 'lucide-react';
+import { Camera, Images, RotateCw, ScanLine, Trash2, UploadCloud } from 'lucide-react';
 import type { OCRDraft, PhotoFile } from '../lib/types';
 import { uid } from '../lib/helpers';
-import { prepareCanvas, scanCanvas, proposeRegions } from '../lib/ocr';
+import { prepareCanvas, scanCanvas, proposeRegions, previewSpine } from '../lib/ocr';
 import type { Region } from '../lib/ocr';
 
 interface Props { onDrafts: (drafts: OCRDraft[]) => void; onInfo: (text: string) => void; }
@@ -17,7 +17,8 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
   const [thorough, setThorough] = useState(true);
   const [autoRegions, setAutoRegions] = useState<Region[]>([]);
   const [showRegions, setShowRegions] = useState(true);
-  const [zoom, setZoom] = useState(100);
+  const [verticalOnly, setVerticalOnly] = useState(true);
+  const [separated, setSeparated] = useState<string[]>([]);
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [dragEnd, setDragEnd] = useState<Point | null>(null);
   const [working, setWorking] = useState(false);
@@ -29,13 +30,14 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
   useEffect(() => () => { for (const photo of photosRef.current) URL.revokeObjectURL(photo.objectUrl); }, []);
   useEffect(() => {
     let cancelled = false;
-    setPreview(''); setCanvas(null); setAutoRegions([]); setDragStart(null); setDragEnd(null);
+    setPreview(''); setCanvas(null); setAutoRegions([]); setSeparated([]); setDragStart(null); setDragEnd(null);
     if (active) prepareCanvas(active).then(c => {
       if (cancelled) return;
-      setCanvas(c); setAutoRegions(proposeRegions(c)); setPreview(c.toDataURL('image/jpeg', .9));
+      const detected = proposeRegions(c, { verticalOnly });
+      setCanvas(c); setAutoRegions(detected); setSeparated(detected.map(r=>previewSpine(c,r))); setPreview(c.toDataURL('image/jpeg', .9));
     }).catch(e => onInfo(String(e)));
     return () => { cancelled = true; };
-  }, [active?.id, active?.rotation]);
+  }, [active?.id, active?.rotation, verticalOnly]);
   function upload(files: FileList | File[] | null) {
     if (!files) return;
     const incoming = Array.from(files).filter(f => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type) && f.size <= 25_000_000);
@@ -56,10 +58,10 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
         const photo = batch[i];
         setProgress(`Foto ${i + 1}/${batch.length}: preparazione immagine…`);
         const c = crop && !all && canvas ? canvas : await prepareCanvas(photo);
-        const regions = crop ? [crop] : proposeRegions(c);
+        const regions = crop ? [crop] : proposeRegions(c, { verticalOnly });
         const found = await scanCanvas(c, photo.id, regions, (done, total) => {
           setProgress(`Foto ${i + 1}/${batch.length} • dorsi analizzati ${done}/${total}`);
-        }, { thorough });
+        }, { thorough, verticalOnly: !crop && verticalOnly });
         drafts.push(...found);
       }
       onDrafts(drafts);
@@ -108,15 +110,17 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
         </div>
         <div className="flex flex-wrap gap-2 items-center mb-3">
           <button className="btn-soft" disabled={!active || working} onClick={() => setPhotos(current => current.map(p => p.id === selected ? { ...p, rotation: ((p.rotation + 90) % 360) as PhotoFile['rotation'] } : p))}><RotateCw size={17}/> Ruota 90°</button>
-          <label className="flex gap-2 items-center text-sm text-slate-600"><ZoomIn size={17}/> Zoom
-            <input aria-label="Zoom anteprima" type="range" min="100" max="300" step="25" value={zoom} onChange={e => setZoom(Number(e.target.value))}/> {zoom}%</label>
+          <button type="button" disabled={working} aria-pressed={verticalOnly} onClick={() => setVerticalOnly(old => !old)}
+            className={`btn-soft ${verticalOnly ? '!bg-teal/10 !border-teal text-teal' : ''}`} title="Escludi le regioni che non hanno le proporzioni di una costa CD verticale">
+            {verticalOnly ? '✓ ' : ''}Rileva solo dorsi verticali
+          </button>
           <label className="flex gap-2 items-center text-sm text-slate-700"><input type="checkbox" checked={thorough} disabled={working} onChange={e => setThorough(e.target.checked)}/> OCR accurato (più lento)</label>
           <label className="flex gap-2 items-center text-sm text-slate-700"><input type="checkbox" checked={showRegions} onChange={e => setShowRegions(e.target.checked)}/> Mostra dorsi rilevati ({autoRegions.length})</label>
           <span className="text-xs text-slate-500">Trascina un rettangolo attorno a UNA costa per una scansione mirata</span>
         </div>
-        <div className="bg-slate-100 border rounded-xl overflow-auto max-h-[580px]">
-          {preview && <div style={{ width: `${zoom}%`, minWidth: '100%', position: 'relative' }}>
-            <img alt="Anteprima delle coste CD" src={preview} draggable={false} className="w-full h-auto block select-none"/>
+        <div className="bg-slate-100 border rounded-xl p-3">
+          {preview && <div className="relative w-fit max-w-full mx-auto">
+            <img alt="Anteprima delle coste CD" src={preview} draggable={false} className="block select-none w-auto max-w-full h-auto max-h-[68vh] object-contain rounded-lg"/>
             <div className="absolute inset-0 cursor-crosshair touch-none" onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); const p = coords(e); setDragStart(p); setDragEnd(p); }}
               onPointerMove={e => { if (dragStart) setDragEnd(coords(e)); }} onPointerUp={e => setDragEnd(coords(e))} />
             {showRegions && canvas && autoRegions.map((r,i) => <div key={i} className="absolute border border-amber-400/80 pointer-events-none" style={{left:`${r.x*100/canvas.width}%`,top:`${r.y*100/canvas.height}%`,width:`${r.width*100/canvas.width}%`,height:`${r.height*100/canvas.height}%`}}><span className="absolute top-0 left-0 text-[9px] bg-amber-400/90 px-1">{i+1}</span></div>)}
@@ -124,6 +128,21 @@ const PhotoScanner = forwardRef<ScannerActions, Props>(function PhotoScanner({ o
           {!preview && <p className="p-6 small">Preparazione anteprima…</p>}
         </div>
         {canvas && autoRegions.length===0 && <p className="text-sm text-amber-700 mt-2">Non sono stati individuati confini affidabili: seleziona manualmente una costa alla volta e ripeti la scansione.</p>}
+        {!!separated.length && <div className="mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h3 className="text-sm font-bold text-navy">Coste ritagliate e distanziate: {separated.length}</h3>
+            <span className="text-xs text-slate-500">Zone OCR indipendenti, senza sovrapposizioni. Seleziona un CD per una scansione singola.</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {separated.map((src,i)=><button type="button" key={i} disabled={working}
+              onClick={()=>autoRegions[i]&&void scan(false,autoRegions[i])}
+              className="w-[92px] shrink-0 rounded-xl border border-slate-200 bg-white p-2 shadow-sm hover:border-teal focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal"
+              title={`Scansiona singolarmente il CD ${i+1}`}>
+              <img src={src} alt={`Costa CD ${i+1}`} className="block w-full h-44 object-contain bg-slate-50 rounded"/>
+              <span className="block mt-2 text-center text-xs font-semibold">CD {i+1}</span>
+            </button>)}
+          </div>
+        </div>}
         <div className="flex flex-wrap gap-2 mt-4 items-center">
           <button className="btn-dark" disabled={working} onClick={() => scan(true)}><ScanLine size={17}/> 🔎 SCANSIONA TUTTE LE FOTO</button>
           <button className="btn-soft" disabled={working || !roi} onClick={() => roi && scan(false, roi)}>Scansiona zona selezionata</button>
