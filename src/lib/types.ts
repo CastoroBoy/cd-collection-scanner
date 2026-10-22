@@ -45,6 +45,7 @@ export interface OCRDraft {
   photoId: string;
   text: string;
   confidence: number;
+  previewUrl?: string;
   artist: string;
   album: string;
   bounds: { x: number; y: number; width: number; height: number };
@@ -63,6 +64,7 @@ export interface MBCandidate {
   firstReleaseDate: string;
   score: number;
   disambiguation?: string;
+  coverUrl?: string;
 }
 export interface MBEdition { id: string; title: string; date: string; country: string; format: string; disambiguation: string; }
 export interface PhotoFile { id: string; name: string; file: File; objectUrl: string; rotation: 0 | 90 | 180 | 270; }

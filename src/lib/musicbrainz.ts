@@ -59,7 +59,7 @@ export async function searchAlbums(artist: string, album: string): Promise<MBCan
     const score = Math.round((artist ? 0.53 * text + 0.47 * person : text) * 100);
     return { id: group.id, title: group.title, artist: a || 'Artista non specificato',
       firstReleaseDate: safeDate(group['first-release-date'] || ''), score,
-      disambiguation: group.disambiguation };
+      disambiguation: group.disambiguation, coverUrl: `https://coverartarchive.org/release-group/${group.id}/front-250` };
   }).filter(c => c.score >= 20).sort((a, b) => b.score - a.score).slice(0, 10);
 }
 /** Cerca possibili separazioni artista/album anche quando sulla costa non c'è un trattino. */

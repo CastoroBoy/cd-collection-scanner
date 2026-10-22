@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { equivalent, estimate, normalize, soldSearchUrl, uniqueCds } from '../lib/helpers';
 import { validateSales } from '../lib/prices';
-import { assessOCR, chooseRead, detectBoundaries } from '../lib/ocr';
+import { assessOCR, chooseRead, detectBoundaries, isolateRegions } from '../lib/ocr';
 import type { CdItem, SoldSale } from '../lib/types';
 const cd: CdItem = { id:'a',artist:'Pink Floyd',album:'The Wall',firstReleaseDate:'1979',editionDate:'',editionCountry:'',editionNote:'',
   mbid:'',releaseId:'',ocrText:'',ocrConfidence:null,confidence:'confermato',sales:[],lastPriceCheck:'',lastMusicCheck:'',createdAt:'',updatedAt:'' };
@@ -52,5 +52,18 @@ describe('qualità OCR della costa', () => {
   });
   it('non inventa dieci dorsi in un profilo privo di confini', () => {
     expect(detectBoundaries(new Array(700).fill(0),20)).toEqual([0,700]);
+  });
+});
+
+describe('separazione dorsi OCR', () => {
+  it('mantiene disgiunte le regioni verticali, anche con limiti sovrapposti', () => {
+    const isolated=isolateRegions([
+      { x:0,y:0,width:55,height:480 },
+      { x:53,y:0,width:55,height:480 },
+      { x:108,y:0,width:52,height:480 }
+    ],160,2);
+    expect(isolated).toHaveLength(3);
+    expect(isolated[0].x+isolated[0].width).toBeLessThanOrEqual(isolated[1].x);
+    expect(isolated[1].x+isolated[1].width).toBeLessThanOrEqual(isolated[2].x);
   });
 });
