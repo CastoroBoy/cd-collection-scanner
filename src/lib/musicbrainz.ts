@@ -89,3 +89,66 @@ export async function findCDEditions(groupId: string): Promise<MBEdition[]> {
       country: String(r.country ?? ''), format: 'CD', disambiguation: String(r.disambiguation ?? '') }))
     .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 80);
 }
+
+/** Ricerca delle edizioni pubblicate tramite EAN/UPC, non dei gruppi di album generici. */
+export interface BarcodeMatch { candidate: MBCandidate; edition: MBEdition; barcode: string; }
+interface RawRelease {
+  id: string; title: string; date?: string; country?: string; barcode?: string;
+  disambiguation?: string; media?: Array<{format?: string}>;
+  'release-group'?: { id: string; title?: string; 'first-release-date'?: string };
+  'artist-credit'?: RawRG['artist-credit'];
+}
+function formatIsCD(release: RawRelease): boolean {
+  return !!release.media?.some(m => /^CD(?:$|\s)/i.test(m.format || ''));
+}
+function hasKnownNonCDFormat(release: RawRelease): boolean {
+  return !!release.media?.length && !formatIsCD(release)
+    && release.media.some(m => (m.format || '').trim().length > 0);
+}
+function asMatch(release: RawRelease, barcode: string): BarcodeMatch | null {
+  const group = release['release-group'];
+  if (!group?.id || !/^[0-9a-f-]{36}$/i.test(group.id) || hasKnownNonCDFormat(release)) return null;
+  const title = (group.title || release.title || '').trim();
+  const artist = artistName({ id: group.id, title, 'artist-credit': release['artist-credit'] });
+  return {
+    barcode,
+    candidate: { id: group.id, title, artist: artist || 'Artista non specificato',
+      firstReleaseDate: safeDate(group['first-release-date'] || release.date || ''),
+      score: 100, coverUrl: 'https://coverartarchive.org/release-group/' + group.id + '/front-250' },
+    edition: { id: release.id, title: release.title || title,
+      date: safeDate(release.date || ''), country: String(release.country || ''),
+      format: formatIsCD(release) ? 'CD' : 'Non verificato',
+      disambiguation: String(release.disambiguation || '') }
+  };
+}
+export async function searchBarcodeReleases(code: string): Promise<BarcodeMatch[]> {
+  const { barcodeVariants, normalizedBarcode } = await import('./barcode');
+  const variants = barcodeVariants(code);
+  if (!variants.length) return [];
+  const matches = new Map<string, BarcodeMatch>();
+  for (const variant of variants) {
+    const params = new URLSearchParams({ query: 'barcode:' + variant, fmt: 'json', limit: '30' });
+    const data = await fetchMB('release/?' + params);
+    const releases = (Array.isArray(data.releases) ? data.releases : []) as RawRelease[];
+    for (const original of releases.slice(0, 20)) {
+      if (!original?.id) continue;
+      // Evita risultati con barcode diverso. Le varianti UPC/EAN sono considerate equivalenti.
+      if (original.barcode && !variants.includes(normalizedBarcode(original.barcode))) continue;
+      let release = original;
+      if (!release['release-group']?.id || !release.media?.length) {
+        try {
+          release = await fetchMB('release/' + original.id + '?' + new URLSearchParams({
+            inc: 'release-groups+media+artists', fmt: 'json'
+          })) as RawRelease;
+        } catch { /* I dati indicizzati sono comunque disponibili. */ }
+      }
+      const match = asMatch(release, variant);
+      if (match) matches.set(match.edition.id, match);
+      if (matches.size >= 12) break;
+    }
+    if (matches.size) break;
+  }
+  return [...matches.values()].sort((a, b) =>
+    Number(b.edition.format === 'CD') - Number(a.edition.format === 'CD')
+    || b.edition.date.localeCompare(a.edition.date));
+}
