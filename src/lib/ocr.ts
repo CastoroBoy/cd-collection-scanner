@@ -3,7 +3,8 @@ import type { OCRDraft, PhotoFile } from './types';
 import { uid, normalize, similarity } from './helpers';
 
 export interface Region { x: number; y: number; width: number; height: number; }
-export interface ScanSettings { thorough?: boolean; }
+export interface ScanSettings { thorough?: boolean; verticalOnly?: boolean; }
+export interface RegionOptions { verticalOnly?: boolean; }
 export interface ReadCandidate { text: string; confidence: number; score: number; angle: number; }
 function clamp(value: number, min: number, max: number) { return Math.max(min, Math.min(max, value)); }
 
@@ -74,21 +75,31 @@ function columnGradient(canvas: HTMLCanvasElement): number[] {
   }
   return Array.from({length:w},(_,x)=>sum[x]/Math.max(1,rows)+35*count[x]/Math.max(1,rows));
 }
-export function proposeRegions(canvas:HTMLCanvasElement):Region[] {
+/** Margini separati: nessun ritaglio OCR condivide pixel con quello adiacente. */
+export function isolateRegions(regions:Region[],width:number,padding=2):Region[] {
+  const ordered=[...regions].sort((a,b)=>a.x-b.x);
+  return ordered.map((r,i)=>{
+    const left=Math.max(0,Math.ceil(r.x),i ? Math.ceil((ordered[i-1].x+ordered[i-1].width+r.x)/2)+padding : 0);
+    const right=Math.min(width,Math.floor(r.x+r.width),i<ordered.length-1 ? Math.floor((r.x+r.width+ordered[i+1].x)/2)-padding : width);
+    return {...r,x:left,width:Math.max(0,right-left)};
+  }).filter(r=>r.width>5);
+}
+export function proposeRegions(canvas:HTMLCanvasElement,options:RegionOptions={}):Region[] {
   const minW=Math.max(16,Math.round(canvas.width/130));
   const limits=detectBoundaries(columnGradient(canvas),minW,36);
+  const verticalOnly=Boolean(options.verticalOnly);
   const regions=limits.slice(0,-1).map((x,i)=>({x,y:0,width:limits[i+1]-x,height:canvas.height}))
-    .filter(r=>r.width>=minW && r.height/r.width>=1.65 && r.width<=canvas.width*.35);
-  // Non suddividere mai artificialmente una foto in 10 dischi.
-  if(!regions.length && canvas.height>canvas.width*1.6)
+    .filter(r=>r.width>=minW && r.height/r.width>=(verticalOnly?2.2:1.45) && r.width<=canvas.width*.35);
+  // Non inventare coste: in assenza di confini usare il fotogramma intero solo se è già stretto e verticale.
+  if(!regions.length && canvas.height>canvas.width*(verticalOnly?2.2:1.65))
     return [{x:0,y:0,width:canvas.width,height:canvas.height}];
-  return regions;
+  return isolateRegions(regions,canvas.width,2);
 }
 type Variant = 'contrast' | 'adaptive';
 function enhancedCrop(canvas:HTMLCanvasElement,b:Region,degrees:number,variant:Variant):HTMLCanvasElement {
-  const x=clamp(Math.floor(b.x-2),0,canvas.width-1),y=clamp(Math.floor(b.y-2),0,canvas.height-1);
-  const w=Math.max(1,Math.min(canvas.width-x,Math.ceil(b.width+4)));
-  const h=Math.max(1,Math.min(canvas.height-y,Math.ceil(b.height+4)));
+  const x=clamp(Math.floor(b.x),0,canvas.width-1),y=clamp(Math.floor(b.y),0,canvas.height-1);
+  const w=Math.max(1,Math.min(canvas.width-x,Math.ceil(b.width)));
+  const h=Math.max(1,Math.min(canvas.height-y,Math.ceil(b.height)));
   const scale=clamp(Math.min(2.8,3000/Math.max(w,h),84/Math.min(w,h)),1,2.8);
   const raw=document.createElement('canvas');
   raw.width=Math.max(1,Math.round(w*scale));
@@ -151,6 +162,10 @@ function enhancedCrop(canvas:HTMLCanvasElement,b:Region,degrees:number,variant:V
   out.drawImage(raw,-raw.width/2,-raw.height/2);
   return turned;
 }
+/** Miniatura nitida del dorso: generata localmente, non caricata su servizi esterni. */
+export function previewSpine(canvas:HTMLCanvasElement,region:Region):string {
+  return enhancedCrop(canvas,region,0,'contrast').toDataURL('image/jpeg',0.85);
+}
 export function assessOCR(text:string,confidence:number):number {
   const s=text.trim().replace(/\s+/g,' ');
   if(s.length<4)return -100;
@@ -187,7 +202,8 @@ export async function scanCanvas(
   canvas:HTMLCanvasElement,photoId:string,regions:Region[],
   onProgress:(n:number,total:number)=>void,settings:ScanSettings={thorough:true}
 ):Promise<OCRDraft[]> {
-  if(!regions.length){onProgress(0,0);return [];}
+  const checked=settings.verticalOnly?regions.filter(r=>r.height/r.width>=2.2):regions;
+  if(!checked.length){onProgress(0,0);return [];}
   const worker=await createWorker('eng',1,{cacheMethod:'write'});
   const result:OCRDraft[]=[];
   try {
@@ -200,8 +216,8 @@ export async function scanCanvas(
       const text=data.text.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
       return {text,confidence:data.confidence,score:assessOCR(text,data.confidence),angle};
     };
-    for(let i=0;i<regions.length;i++){
-      const r=regions[i],angles=r.height>r.width*1.25?[90,270]:[0,180];
+    for(let i=0;i<checked.length;i++){
+      const r=checked[i],angles=r.height>r.width*1.25?[90,270]:[0,180];
       const reads:ReadCandidate[]=[];
       for(const angle of angles)reads.push(await read(r,angle,'contrast',PSM.SINGLE_LINE));
       let best=chooseRead(reads);
@@ -217,7 +233,7 @@ export async function scanCanvas(
         &&!result.some(d=>similarity(d.text,best.text)>=.93)){
         result.push(draftFromText(photoId,r,best.text,Math.round(best.confidence)));
       }
-      onProgress(i+1,regions.length);
+      onProgress(i+1,checked.length);
     }
   }finally{await worker.terminate();}
   return result;
